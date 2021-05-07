@@ -1,0 +1,530 @@
+---
+title: "Tidymodels workflow example - fraud prediction"
+author: "Alex Farach"
+date: "4/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.lazy = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  dpi = 180,
+  fig.width = 8,
+  fig.height = 5,
+  echo = TRUE
+  )
+
+library(tidyverse)
+theme_set(theme_minimal())
+```
+
+The following table comes from the kaggle dataset: https://www.kaggle.com/ntnu-testimon/paysim1
+
+```{r}
+fraud_data <- read_csv("../fraud/example_data/fraud_example.csv")
+```
+
+Let's take a look at the data
+
+```{r}
+# Look at counts
+fraud_data %>%
+  group_by(isFraud) %>%
+  summarise(
+    n = n()
+  ) %>%
+  ungroup()
+
+# Get percentages
+fraud_data %>%
+  count(isFraud) %>%
+  mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
+
+# Create visiual to explore variables
+set.seed(123)
+fraud_data %>%
+  sample_frac(0.03) %>%
+  select_if(is.numeric) %>%
+  GGally::ggscatmat(
+    columns = 1:6, 
+    color = "isFraud", 
+    alpha = 0.75,  
+    corMethod = "spearman"
+    ) +
+  ggsci::scale_color_jco() +
+  # ggpubr::theme_pubclean() +
+  # theme(
+  #   strip.background = element_blank(),
+  #   legend.position = "bottom",
+  #   legend.key = element_blank()
+  #   ) +
+  labs(
+    title = "Scatterplot matrix for fraud data numeric variables"
+    
+  )
+```
+
+# Tidymodels -------------------------------------------------------------------
+
+```{r}
+library(tidymodels)
+
+set.seed(123)
+# Clean data a bit
+fraud_model_data <-
+  fraud_data %>%
+  select(
+    isFraud, step, type, amount, oldbalanceOrg, newbalanceOrig, oldbalanceDest,
+    newbalanceDest
+  ) %>%
+  mutate(
+    isFraud = as.factor(if_else(isFraud == 0, "No", "Yes"))
+  ) %>%
+  mutate_if(is.character, as.factor) %>%
+  sample_frac(0.03)
+
+# Get percentages
+fraud_model_data %>%
+  count(isFraud) %>%
+  mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
+```
+
+```{r}
+# Create split, train, and test datasets
+set.seed(123)
+fraud_split <- initial_split(fraud_model_data, prop = 0.75, strata = isFraud)
+fraud_train <- training(fraud_split)
+fraud_test <- testing(fraud_split)
+
+nrow(fraud_train)
+nrow(fraud_test)
+```
+
+# Modeling V1
+
+## Fit model - simple logistic regression
+
+```{r specify_lg_simple}
+# Specify a logistic regression model
+logistic_model <- logistic_reg() %>% 
+  # Set the engine
+  set_engine('glm') %>% 
+  # Set the mode
+  set_mode('classification')
+
+# Print the model specification
+logistic_model
+```
+
+```{r fit_lg_simple}
+# Fit to training data
+logistic_fit <- logistic_model %>% 
+  fit(isFraud ~ ., data = fraud_train)
+
+# Print model fit object
+logistic_fit
+```
+
+## Combine test dataset results
+
+```{r combine_lg_simple_pred}
+# Predict outcome categories
+class_preds <- predict(logistic_fit, new_data = fraud_test,
+                       type = 'class')
+
+# Obtain estimated probabilities for each outcome value
+prob_preds <- predict(logistic_fit, new_data = fraud_test,
+                       type = 'prob')
+
+# Combine test set results
+fraud_results <- fraud_test %>% 
+  select(isFraud) %>% 
+  bind_cols(class_preds, prob_preds)
+
+# View results tibble
+fraud_results
+```
+## Evaluate performance
+
+```{r evaluate_lg_simple}
+# custom metrics
+custom_metrics <- metric_set(accuracy, sens, spec)
+
+custom_metrics(
+  fraud_results,
+  truth = isFraud,
+  estimate = .pred_class
+)
+
+# all metrics
+conf_mat(fraud_results, truth = isFraud, estimate = .pred_class) %>%
+  summary()
+```
+
+## Visual evaluation - confusion matrix, ROC curve and area under ROC curve
+
+```{r eval_lg_simple_viz}
+fraud_results %>%
+  conf_mat(truth = isFraud, estimate = .pred_class) %>%
+  autoplot('heatmap')
+
+fraud_results %>%
+  roc_curve(truth = isFraud, estimate = .pred_No) %>%
+  autoplot() +
+  labs(
+    x = "1-specificity\n(proportion of false positives\namong true negatives)",
+    y = "sensitivity\n(proportion of all positive cases that\nwere correctly classfied)"
+  )
+
+roc_auc(fraud_results, truth = isFraud, .pred_No)
+```
+
+## Streamline modeling process - complete modeling workflow
+
+```{r lg_simple_wf}
+# Train model with last fit
+fraud_last_fit <- logistic_model %>%
+  last_fit(isFraud ~ ., split = fraud_split)
+
+# Collect predictions
+last_fit_results <- fraud_last_fit %>%
+  collect_predictions()
+
+# Custom metrics function
+last_fit_metrics <- metric_set(accuracy, sens,
+                               spec, roc_auc)
+
+# Calculate metrics
+last_fit_metrics(last_fit_results,
+                 truth = isFraud,
+                 estimate = .pred_class,
+                 .pred_No)
+
+# Plot roc_curve
+last_fit_results %>%
+  roc_curve(truth = isFraud, .pred_No) %>%
+  autoplot() +
+  labs(
+    x = "1-specificity\n(proportion of false positives\namong true negatives)",
+    y = "sensitivity\n(proportion of all positive cases that\nwere correctly classfied)"
+  )
+```
+
+## Feature engineering
+
+Let's first deal with the numeric data
+
+```{r}
+fraud_train %>%
+  select_if(is.numeric) %>%
+  cor()
+```
+
+```{r}
+fraud_train %>%
+  ggplot(aes(oldbalanceDest , newbalanceDest)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+```
+
+Remove highly correlated variables.
+
+```{r}
+# Specify a recipe object
+fraud_cor_rec <- recipe(isFraud ~ .,
+                          data = fraud_train) %>% 
+  # Remove correlated variables
+  step_corr(all_numeric(), threshold = 0.9)
+
+# Train the recipe
+fraud_cor_rec_prep <- fraud_cor_rec %>% 
+  prep(training = fraud_train)
+
+# Apply to training data
+fraud_cor_rec_prep %>% 
+  bake(new_data = NULL)
+
+# Apply to test data
+fraud_cor_rec_prep %>% 
+  bake(new_data = fraud_test)
+```
+
+Take it 1 step further and apply normalization. In addition will deal with the 
+non-numeric data and then lastly deal with the class imbalance - will use the
+`themis::` library/package to apply SMOTE procedure for class imbalance.
+
+If we wanted to do PCA, we can do it here by using `step_ica    ()`, 
+`step_kpca()`, or `step_pca()`
+
+```{r}
+#for step_smote - class imbalance
+library(themis)
+
+# Specify a recipe object
+fraud_norm_rec <- recipe(isFraud ~ ., data = fraud_train) %>%
+  # Remove correlated variables
+  step_corr(all_numeric(), threshold = 0.9) %>%
+  # Add log transformation step
+  step_log(all_numeric(), base = 10, offset = 0.01) %>%
+  # Normalize numeric predictors - do this before normalizing
+  step_normalize(all_numeric()) %>%
+  # encode categorical data into numerical data
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  # deal with class imbalance
+  step_smote(isFraud)
+
+# Train the recipe
+fraud_test_prep <- fraud_norm_rec %>%
+  prep(training = fraud_train) %>%
+  bake(new_data = fraud_test)
+
+fraud_train_prep <- fraud_norm_rec %>%
+  prep(training = fraud_train) %>%
+  bake(new_data = NULL)
+
+fraud_norm_rec
+fraud_test_prep
+fraud_train_prep
+```
+
+# Let's use this new cleaned up (feature engineered) data
+
+```{r}
+# Train logistic model
+logistic_fit <- logistic_model %>% 
+  fit(isFraud ~ ., data = fraud_train_prep)
+
+# Obtain class predictions
+class_preds <- predict(logistic_fit, new_data = fraud_test_prep, type = 'class')
+
+# Obtain estimated probabilities
+prob_preds <- predict(logistic_fit, new_data = fraud_test_prep,
+                   type = 'prob')
+
+# Combine test set results
+fraud_results <- fraud_test_prep %>% 
+  select(isFraud) %>% 
+  bind_cols(class_preds, prob_preds)
+
+fraud_results
+```
+
+Let's see how the feature engineered data did
+
+```{r}
+fraud_results %>%
+  conf_mat(truth = isFraud, estimate = .pred_class)
+
+fraud_results %>%
+  roc_curve(truth = isFraud, estimate = .pred_No) %>%
+  autoplot()  +
+  labs(
+    x = "1-specificity\n(proportion of false positives\namong true negatives)",
+    y = "sensitivity\n(proportion of all positive cases that\nwere correctly classfied)"
+  )
+```
+
+# Modeling V2
+
+We are going to switch models here and use a decision tree as opposed to 
+logistic regression. Instead of having to redo everything we went through above
+we will begin putting together a `workflow()`.
+
+To create the workflow we will add a model and a recipe. In this case we will
+add the decision tree model and then the feature engineered recipe we did above.
+After that we can apply the split data to the workflow and get results.
+
+```{r}
+# Choose model, engine, mode - decision tree
+dt_model <- decision_tree() %>%
+  # Specify the engine
+  set_engine("rpart") %>%
+  # Specify the mode
+  set_mode("classification")
+
+# 5. Create a workflow - combine model and recipe
+fraud_dt_wkfl <- workflow() %>%
+  # Include the model object
+  add_model(dt_model) %>%
+  # Include the recipe object we created above
+  add_recipe(fraud_norm_rec)
+
+# 6. Finish up by training the workflow
+fraud_dt_wkfl_fit <- fraud_dt_wkfl %>%
+  last_fit(split = fraud_split)
+
+# 7. Calculate performance metrics on test data
+fraud_dt_wkfl_fit %>%
+  collect_metrics()
+```
+
+Having the `workflow()` helps us better keep track of things.
+
+We can do better though: validation folds!
+
+```{r}
+# Create cross validation folds
+set.seed(456)
+fraud_folds <- vfold_cv(fraud_train, v = 10,
+                   strata = isFraud)
+
+fraud_folds
+
+fraud_metrics <- metric_set(roc_auc, sens, spec)
+
+fraud_dt_rs <- fraud_dt_wkfl %>%
+  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+
+fraud_dt_rs %>% collect_metrics()
+```
+
+```{r}
+# Create decision tree workflow - combine model and recipe
+fraud_dt_wkfl <- workflow() %>%
+  # Include the model object
+  add_model(dt_model) %>%
+  # Include the recipe object
+  add_recipe(fraud_norm_rec)
+
+# Create logistic regression workflow - combine model and recipe
+fraud_logistic_wkfl <- workflow() %>%
+  # Include the model object
+  add_model(logistic_model) %>%
+  # Include the recipe object
+  add_recipe(fraud_norm_rec)
+
+# Fit Resamples - create cross validation folds and metrics
+fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
+fraud_metrics <- metric_set(roc_auc, sens, spec)
+
+fraud_dt_rs <- fraud_dt_wkfl %>%
+  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+fraud_logistic_rs <- fraud_logistic_wkfl %>% 
+  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+
+fraud_dt_rs %>% 
+  collect_metrics()
+fraud_logistic_rs %>% 
+  collect_metrics()
+
+# 7. compate model performance
+# Detailed cross validation results
+dt_rs_results <- fraud_dt_rs %>% 
+  collect_metrics(summarize = FALSE)
+logistic_rs_results <- fraud_logistic_rs %>%
+  collect_metrics(summarize = FALSE)
+
+# Explore model performance for decision tree
+dt_rs_results %>% 
+  group_by(.metric) %>% 
+  summarize(min = min(.estimate, na.rm = TRUE),
+            median = median(.estimate, na.rm = TRUE),
+            max = max(.estimate, na.rm = TRUE))
+
+# Explore model performance for logistic regression
+logistic_rs_results %>% 
+  group_by(.metric) %>% 
+  summarize(min = min(.estimate, na.rm = TRUE),
+            median = median(.estimate, na.rm = TRUE),
+            max = max(.estimate, na.rm = TRUE))
+```
+
+Hyperparameters tuning
+
+```{r}
+# Set hyperparameters for tuning
+dt_tune_model <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>% 
+  # Specify engine
+  set_engine('rpart') %>% 
+  # Specify mode
+  set_mode('classification')
+
+# Crete a tuning workflow
+fraud_dt_tune_wkfl <- fraud_dt_wkfl %>%
+  # replace model
+  update_model(dt_tune_model)
+
+# Hyperparameter tuning with grid search
+set.seed(214)
+dt_grid <- grid_random(parameters(dt_tune_model),
+               size = 5)
+
+dt_grid
+
+# Hyperparameter tuning
+dt_tuning <- fraud_dt_tune_wkfl %>% 
+  tune_grid(
+    resamples = fraud_folds,
+    grid = dt_grid,
+    metrics = fraud_metrics
+    )
+
+# View results
+dt_tuning %>% 
+  collect_metrics()
+
+dt_tuning %>%
+  collect_metrics(summarize = FALSE)
+```
+
+Pick the best one!
+
+```{r}
+# Collect detailed tuning results
+dt_tuning_results <- dt_tuning %>% 
+  collect_metrics(summarize = FALSE)
+
+# Explore detailed ROC AUC results for each fold
+dt_tuning_results %>% 
+  filter(.metric == 'roc_auc') %>% 
+  group_by(id) %>% 
+  summarize(min_roc_auc = min(.estimate),
+            median_roc_auc = median((.estimate)),
+            max_roc_auc = max((.estimate)))
+
+# Display 5 best performing models
+dt_tuning %>% 
+  show_best(metric = 'roc_auc', n = 5)
+
+# Select based on best performance
+best_dt_model <- dt_tuning %>% 
+  # Choose the best model based on roc_auc
+  select_best(metric = 'roc_auc')
+
+# Finalize your workflow
+final_fraud_wkfl <- fraud_dt_tune_wkfl %>% 
+  finalize_workflow(best_dt_model)
+
+final_fraud_wkfl
+```
+
+Almost done - the final train
+
+```{r}
+# Train finalized decision tree workflow
+fraud_final_fit <- final_fraud_wkfl %>% 
+  last_fit(split = fraud_split)
+
+# View performance metrics
+fraud_final_fit %>% 
+  collect_metrics()
+
+# Create an ROC curve
+fraud_final_fit %>% 
+  # Collect predictions
+  collect_predictions() %>%
+  # Calculate ROC curve metrics
+  roc_curve(truth = isFraud, .pred_No) %>%
+  # Plot the ROC curve
+  autoplot() +
+  labs(
+    x = "1-specificity\n(proportion of false positives\namong true negatives)",
+    y = "sensitivity\n(proportion of all positive cases that\nwere correctly classied)"
+  )
+```

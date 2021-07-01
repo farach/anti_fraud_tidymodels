@@ -22,14 +22,64 @@ library(tidyverse)
 theme_set(theme_minimal())
 ```
 
-The following table comes from the kaggle dataset: https://www.kaggle.com/ntnu-testimon/paysim1
+# Typical steps in a machine learning project ----------------------------------
+1. Get the data
+2. Explore the data
+  - Study attributes
+    - name
+    - types 
+    - missing values
+    - noisiness (stochastic, outliers, etc)
+    - Usefulness
+    - Distributions (uniform, logarithmic, etc.)
+  - Identify the dependent variable
+  - Visualize the data
+  - Review correlations
+3. Prep the data
+  - Clean-up
+    - Fix or remove outliers
+    - Fill in missing values or drop them.
+  - Feature selection (maybe). Drop features that provide no useful info.
+  - Feature engineering (maybe). Bucketing continuous variables, add 
+    transformations (log, sqrts, etc.). Create new features like recency if
+    dealing with time features.
+  - Feature scaling (maybe). Normalize/standardize
+4. Shortlist promising models
+  - Train a bunch of quick and dirty models from different categories (e.g.
+    linear, naive Bayes, SVM, random forest, neural net, etc.)
+  - Measure and compare performance (use validation folds)
+  - Analyze results
+    - Significant variables
+    - Errors
+  - Quick round of feature selection and engineering.
+  - Repeat above steps a couple of times.
+  - Pick best model/s
+5. Fine-tuning
+  - Hyperparameter tuning using cross-validation
+  - Ensemble methods (maybe)
+  - Once confident about the final model, measure performance on test set.
+6. Present results
+7. Deploy model
 
+In the example that follows I slowly add different elements of this whole list
+in order to present the tidymodels machine learning approach in a more 
+digestible form.
+
+I will introduce concepts one by one and slowly building on each topic. 
+Eventually, most everything above will be covered. This is to say what follows
+below is not the proper way to code or build a machine learning model - it's
+the way I find it easiest to learn about tidymodels and machine learning 
+pipelines generally.
+
+# Tidymodels approach 
+## Get the data
+The following table comes from the kaggle dataset: 
+  https://www.kaggle.com/ntnu-testimon/paysim1
 ```{r}
-fraud_data <- read_csv("../fraud/example_data/fraud_example.csv")
+fraud_data <- read_csv("./fraud/example_data/fraud_example.csv")
 ```
 
-Let's take a look at the data
-
+## Explore the data
 ```{r}
 # Look at counts
 fraud_data %>%
@@ -44,32 +94,29 @@ fraud_data %>%
   count(isFraud) %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
 
-# Create visiual to explore variables
+# Create visual to explore variables
 set.seed(123)
-fraud_data %>%
-  sample_frac(0.03) %>%
-  select_if(is.numeric) %>%
-  GGally::ggscatmat(
-    columns = 1:6, 
-    color = "isFraud", 
-    alpha = 0.75,  
-    corMethod = "spearman"
-    ) +
-  ggsci::scale_color_jco() +
-  # ggpubr::theme_pubclean() +
-  # theme(
-  #   strip.background = element_blank(),
-  #   legend.position = "bottom",
-  #   legend.key = element_blank()
-  #   ) +
-  labs(
-    title = "Scatterplot matrix for fraud data numeric variables"
-    
-  )
+# fraud_data %>%
+#   sample_frac(0.03) %>%
+#   select_if(is.numeric) %>%
+#   GGally::ggscatmat(
+#     columns = 1:6, 
+#     color = "isFraud", 
+#     alpha = 0.75,  
+#     corMethod = "spearman"
+#     ) +
+#   ggsci::scale_color_jco() +
+#   # ggpubr::theme_pubclean() +
+#   # theme(
+#   #   strip.background = element_blank(),
+#   #   legend.position = "bottom",
+#   #   legend.key = element_blank()
+#   #   ) +
+#   labs(
+#     title = "Scatterplot matrix for fraud data numeric variables")
 ```
 
-# Tidymodels -------------------------------------------------------------------
-
+## Clean the data
 ```{r}
 library(tidymodels)
 
@@ -93,21 +140,32 @@ fraud_model_data %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
 ```
 
+## Create split, train, and test datasets
+
+Here we are just creating a training and testing split. If you wanted to you
+could split the training data further to get a validation set using the `mc_cv()`
+function in the `rsample` package. This is a good practice but for the sake of 
+simplicity I am omitting here.
+
+It's also a good practice to split the data earlier so that steps taken in the
+cleaning part of the machine learning process could be replicated in a ML
+pipeline.
+
 ```{r}
-# Create split, train, and test datasets
 set.seed(123)
 fraud_split <- initial_split(fraud_model_data, prop = 0.75, strata = isFraud)
 fraud_train <- training(fraud_split)
 fraud_test <- testing(fraud_split)
 
-nrow(fraud_train)
-nrow(fraud_test)
+print(paste("Size of training data:", nrow(fraud_train)))
+print(paste("Size of testing data:", nrow(fraud_test)))
 ```
 
 # Modeling V1
+Ideally you would want to use more than 2 models but here I will just present
+2 for the sake of simplicity: a logistic model and a decision tree model.
 
-## Fit model - simple logistic regression
-
+## Specify the model - simple logistic regression
 ```{r specify_lg_simple}
 # Specify a logistic regression model
 logistic_model <- logistic_reg() %>% 
@@ -120,6 +178,7 @@ logistic_model <- logistic_reg() %>%
 logistic_model
 ```
 
+## Fit the model to the training data
 ```{r fit_lg_simple}
 # Fit to training data
 logistic_fit <- logistic_model %>% 
@@ -130,7 +189,6 @@ logistic_fit
 ```
 
 ## Combine test dataset results
-
 ```{r combine_lg_simple_pred}
 # Predict outcome categories
 class_preds <- predict(logistic_fit, new_data = fraud_test,
@@ -148,17 +206,13 @@ fraud_results <- fraud_test %>%
 # View results tibble
 fraud_results
 ```
-## Evaluate performance
 
+## Evaluate performance
 ```{r evaluate_lg_simple}
 # custom metrics
 custom_metrics <- metric_set(accuracy, sens, spec)
 
-custom_metrics(
-  fraud_results,
-  truth = isFraud,
-  estimate = .pred_class
-)
+custom_metrics(fraud_results, truth = isFraud, estimate = .pred_class)
 
 # all metrics
 conf_mat(fraud_results, truth = isFraud, estimate = .pred_class) %>%
@@ -166,7 +220,6 @@ conf_mat(fraud_results, truth = isFraud, estimate = .pred_class) %>%
 ```
 
 ## Visual evaluation - confusion matrix, ROC curve and area under ROC curve
-
 ```{r eval_lg_simple_viz}
 fraud_results %>%
   conf_mat(truth = isFraud, estimate = .pred_class) %>%
@@ -183,7 +236,14 @@ fraud_results %>%
 roc_auc(fraud_results, truth = isFraud, .pred_No)
 ```
 
-## Streamline modeling process - complete modeling workflow
+## Complete the model training process
+
+Our approach thus far has been really simple. We only used a single training 
+set. Later on I'll show you how to use validation folds and I mentioned the use 
+of a validation set above which would add some complications to these first 
+model training steps. If we took that route we would want to do one last fit of 
+the model on all the training data - not the folded and train/validation split 
+data.
 
 ```{r lg_simple_wf}
 # Train model with last fit
@@ -216,27 +276,30 @@ last_fit_results %>%
 
 ## Feature engineering
 
-Let's first deal with the numeric data
-
+Here I will introduce how to do feature engineering with tidymodels. Let's start
+with an easy example, looking for and removing highly correlated numeric 
+features.
 ```{r}
+# use the cor() function to find the correlated values
 fraud_train %>%
   select_if(is.numeric) %>%
   cor()
 ```
 
 ```{r}
+# visualize the nonsense
 fraud_train %>%
   ggplot(aes(oldbalanceDest , newbalanceDest)) +
   geom_point(alpha = 0.5) +
   theme_minimal()
 ```
 
-Remove highly correlated variables.
-
+In tidymodels all feature engineering functions start with `step_*()` which makes
+it super easy to explore and deal with. Below I also introduce the `prep()` and
+`bake()` functions which allows us to apply the feature engineering to the data.
 ```{r}
 # Specify a recipe object
-fraud_cor_rec <- recipe(isFraud ~ .,
-                          data = fraud_train) %>% 
+fraud_cor_rec <- recipe(isFraud ~ ., data = fraud_train) %>% 
   # Remove correlated variables
   step_corr(all_numeric(), threshold = 0.9)
 
@@ -253,12 +316,12 @@ fraud_cor_rec_prep %>%
   bake(new_data = fraud_test)
 ```
 
-Take it 1 step further and apply normalization. In addition will deal with the 
-non-numeric data and then lastly deal with the class imbalance - will use the
-`themis::` library/package to apply SMOTE procedure for class imbalance.
+We can take it 1 step further and apply normalization, deal with the 
+non-numeric data, and then lastly deal with the class imbalance - will use the
+`themis` library/package to apply SMOTE procedure for class imbalance.
 
-If we wanted to do PCA, we can do it here by using `step_ica    ()`, 
-`step_kpca()`, or `step_pca()`
+If we wanted to do PCA, we can do it here by using `step_ica()`, `step_kpca()`, 
+or `step_pca()`
 
 ```{r}
 #for step_smote - class imbalance
@@ -291,7 +354,7 @@ fraud_test_prep
 fraud_train_prep
 ```
 
-# Let's use this new cleaned up (feature engineered) data
+## Fit and predict new cleaned up (feature engineered) data
 
 ```{r}
 # Train logistic model
@@ -302,8 +365,7 @@ logistic_fit <- logistic_model %>%
 class_preds <- predict(logistic_fit, new_data = fraud_test_prep, type = 'class')
 
 # Obtain estimated probabilities
-prob_preds <- predict(logistic_fit, new_data = fraud_test_prep,
-                   type = 'prob')
+prob_preds <- predict(logistic_fit, new_data = fraud_test_prep, type = 'prob')
 
 # Combine test set results
 fraud_results <- fraud_test_prep %>% 
@@ -313,7 +375,7 @@ fraud_results <- fraud_test_prep %>%
 fraud_results
 ```
 
-Let's see how the feature engineered data did
+## Evaluate the model with feature engineered data
 
 ```{r}
 fraud_results %>%
@@ -332,7 +394,8 @@ fraud_results %>%
 
 We are going to switch models here and use a decision tree as opposed to 
 logistic regression. Instead of having to redo everything we went through above
-we will begin putting together a `workflow()`.
+we will begin putting together a `workflow()`. Workflows are "ML pipeline" in
+the tidymodels world.
 
 To create the workflow we will add a model and a recipe. In this case we will
 add the decision tree model and then the feature engineered recipe we did above.
@@ -362,27 +425,45 @@ fraud_dt_wkfl_fit %>%
   collect_metrics()
 ```
 
-Having the `workflow()` helps us better keep track of things.
+Having the `workflow()` helps us better keep track of things!
 
-We can do better though: validation folds!
+## Validation folds 
+Up until now we have used a single train/test split. We can help our models 
+less likely to be influenced by outliers and subsequently overfitting the 
+data by using validation folds.
+
+The rsample package within tidymodels has the `vfold_cv()` function to do just 
+that.
 
 ```{r}
 # Create cross validation folds
 set.seed(456)
-fraud_folds <- vfold_cv(fraud_train, v = 10,
-                   strata = isFraud)
+fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
 
+# print out the folds
 fraud_folds
 
+# obtain metrics for our folds
 fraud_metrics <- metric_set(roc_auc, sens, spec)
 
+# now we train a model for every fold
 fraud_dt_rs <- fraud_dt_wkfl %>%
   fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
 
+# and measure the out of sample performance for each
 fraud_dt_rs %>% collect_metrics()
 ```
 
+We can use everything we've put together and done up until now in a more 
+cohesive single chunk of code so you can see things running together and in 
+order.
+
+This is closer to looking like what you may typically see in a machine learning
+model project.
 ```{r}
+# I have left out the train/test split and feature engineering stuff but that
+# would go here before the workflow stuff.
+
 # Create decision tree workflow - combine model and recipe
 fraud_dt_wkfl <- workflow() %>%
   # Include the model object
@@ -411,7 +492,7 @@ fraud_dt_rs %>%
 fraud_logistic_rs %>% 
   collect_metrics()
 
-# 7. compate model performance
+# 7. compare model performance
 # Detailed cross validation results
 dt_rs_results <- fraud_dt_rs %>% 
   collect_metrics(summarize = FALSE)
@@ -433,13 +514,15 @@ logistic_rs_results %>%
             max = max(.estimate, na.rm = TRUE))
 ```
 
-Hyperparameters tuning
+## Hyperparameters tuning
 
+The last thing I want to cover is hyperparameter tuning. We can use the `tune()`
+function from the `tune` package within tidymodels to do just that.
 ```{r}
-# Set hyperparameters for tuning
-dt_tune_model <- decision_tree(cost_complexity = tune(),
-                               tree_depth = tune(),
-                               min_n = tune()) %>% 
+# Set hyperparameters for tuning in the model specification step
+dt_tune_model <- decision_tree(
+  cost_complexity = tune(), tree_depth = tune(), min_n = tune()
+  ) %>% 
   # Specify engine
   set_engine('rpart') %>% 
   # Specify mode
@@ -452,8 +535,7 @@ fraud_dt_tune_wkfl <- fraud_dt_wkfl %>%
 
 # Hyperparameter tuning with grid search
 set.seed(214)
-dt_grid <- grid_random(parameters(dt_tune_model),
-               size = 5)
+dt_grid <- grid_random(parameters(dt_tune_model), size = 5)
 
 dt_grid
 
@@ -504,8 +586,10 @@ final_fraud_wkfl <- fraud_dt_tune_wkfl %>%
 final_fraud_wkfl
 ```
 
-Almost done - the final train
+At this point if you wanted to combine models you could do so via the `stacks`
+package within tidymodels! I will not cover that here.
 
+Almost done - the final train
 ```{r}
 # Train finalized decision tree workflow
 fraud_final_fit <- final_fraud_wkfl %>% 
@@ -528,3 +612,32 @@ fraud_final_fit %>%
     y = "sensitivity\n(proportion of all positive cases that\nwere correctly classied)"
   )
 ```
+
+# Bonus!!! Export the model to use in production!!
+
+If you are satisfied with the model you created and are ready to add it to a
+wonderful Shiny app you created you would do so by exporting the workflow!
+
+A word of caution, modeling pipelines can take up A LOT OF MEMORY. Guess what?
+Tidymodels can help you here too! You can use the `butcher` package within 
+tidymodels to "axe parts of the fitted output that are no longer needed, without 
+sacrificing much functionality from the original model object"
+```{r}
+# extract the workflow object to make predictions with
+fraud_wf_model <- final_fraud_wkfl$.workflow[[1]]
+
+# save the model to be used later
+saveRDS(fraud_wf_model, "./fraud_wf_model.rds")
+
+# lets also save the metrics so that we can see how the model performs on new
+# data coming through our Shiny application
+collect_metrics(fraud_final_fit) %>%
+  write_csv("./fraud_model_metrics.csv")
+```
+
+From here you could use the `plumber` package to create an API that calls this
+model and saves the results of the model to the model metrics csv!
+
+Good luck!
+
+If you have any questions feel free to reach out to me: alexander.r.farach@accenturefederal.com

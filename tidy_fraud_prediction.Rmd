@@ -65,11 +65,10 @@ In the example that follows I slowly add different elements of this whole list
 in order to present the tidymodels machine learning approach in a more 
 digestible form.
 
-I will introduce concepts one by one and slowly building on each topic. 
+I will introduce concepts one by one and slowly build on each topic. 
 Eventually, most everything above will be covered. This is to say what follows
-below is not the proper way to code or build a machine learning model - it's
-the way I find it easiest to learn about tidymodels and machine learning 
-pipelines generally.
+is not the proper way to build a machine learning model - it's the way I find 
+it easiest to learn about tidymodels and machine learning pipelines generally.
 
 # Tidymodels approach 
 ## Get the data

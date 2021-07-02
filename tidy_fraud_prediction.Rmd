@@ -73,6 +73,7 @@ pipelines generally.
 
 # Tidymodels approach 
 ## Get the data
+
 The following table comes from the kaggle dataset: 
   https://www.kaggle.com/ntnu-testimon/paysim1
 ```{r}
@@ -152,11 +153,19 @@ cleaning part of the machine learning process could be replicated in a ML
 pipeline.
 
 ```{r}
+# Set seed for reproducibility
 set.seed(123)
+
+# Create initial split
 fraud_split <- initial_split(fraud_model_data, prop = 0.75, strata = isFraud)
+
+# Assign the trainging set
 fraud_train <- training(fraud_split)
+
+# Assign the test set
 fraud_test <- testing(fraud_split)
 
+# Print out the size of training and testing sets
 print(paste("Size of training data:", nrow(fraud_train)))
 print(paste("Size of testing data:", nrow(fraud_test)))
 ```
@@ -209,22 +218,25 @@ fraud_results
 
 ## Evaluate performance
 ```{r evaluate_lg_simple}
-# custom metrics
+# Create custom metric set to evaluate performance.
 custom_metrics <- metric_set(accuracy, sens, spec)
 
+# Print out the custom metrics results
 custom_metrics(fraud_results, truth = isFraud, estimate = .pred_class)
 
-# all metrics
+# Here are all the available metrics
 conf_mat(fraud_results, truth = isFraud, estimate = .pred_class) %>%
   summary()
 ```
 
 ## Visual evaluation - confusion matrix, ROC curve and area under ROC curve
 ```{r eval_lg_simple_viz}
+# Create confusion matrix to see TP, FP, TN, and FN results
 fraud_results %>%
   conf_mat(truth = isFraud, estimate = .pred_class) %>%
   autoplot('heatmap')
 
+# Plot roc_curve
 fraud_results %>%
   roc_curve(truth = isFraud, estimate = .pred_No) %>%
   autoplot() +
@@ -233,6 +245,7 @@ fraud_results %>%
     y = "sensitivity\n(proportion of all positive cases that\nwere correctly classfied)"
   )
 
+# Print out the AUC of the ROC curve
 roc_auc(fraud_results, truth = isFraud, .pred_No)
 ```
 
@@ -287,7 +300,7 @@ fraud_train %>%
 ```
 
 ```{r}
-# visualize the nonsense
+# visualize the relationship in question
 fraud_train %>%
   ggplot(aes(oldbalanceDest , newbalanceDest)) +
   geom_point(alpha = 0.5) +
@@ -323,8 +336,13 @@ non-numeric data, and then lastly deal with the class imbalance - will use the
 If we wanted to do PCA, we can do it here by using `step_ica()`, `step_kpca()`, 
 or `step_pca()`
 
+In the next step we bring in the `themis` package within tidymodels to use the
+`step_smote()` function. This will address the class balance issue we discovered
+when exploring the data.
+
 ```{r}
-#for step_smote - class imbalance
+# Load the themis package to use SMOTE (Synthetic Minority Over-​sampling 
+# Technique) to deal with the class imbalance.
 library(themis)
 
 # Specify a recipe object

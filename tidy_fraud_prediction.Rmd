@@ -77,6 +77,7 @@ pipelines generally.
 The following table comes from the kaggle dataset: 
   https://www.kaggle.com/ntnu-testimon/paysim1
 ```{r}
+# Import the data
 fraud_data <- read_csv("./fraud/example_data/fraud_example.csv")
 ```
 
@@ -96,7 +97,7 @@ fraud_data %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
 
 # Create visual to explore variables
-set.seed(123)
+# set.seed(123)
 # fraud_data %>%
 #   sample_frac(0.03) %>%
 #   select_if(is.numeric) %>%
@@ -173,6 +174,9 @@ print(paste("Size of testing data:", nrow(fraud_test)))
 # Modeling V1
 Ideally you would want to use more than 2 models but here I will just present
 2 for the sake of simplicity: a logistic model and a decision tree model.
+
+If you would like to see all the models in Tidymodels you can do so by going to
+this link: https://www.tidymodels.org/find/parsnip/
 
 ## Specify the model - simple logistic regression
 ```{r specify_lg_simple}
@@ -293,14 +297,14 @@ Here I will introduce how to do feature engineering with tidymodels. Let's start
 with an easy example, looking for and removing highly correlated numeric 
 features.
 ```{r}
-# use the cor() function to find the correlated values
+# Use the cor() function to find the correlated values
 fraud_train %>%
   select_if(is.numeric) %>%
   cor()
 ```
 
 ```{r}
-# visualize the relationship in question
+# Visualize the relationship in question
 fraud_train %>%
   ggplot(aes(oldbalanceDest , newbalanceDest)) +
   geom_point(alpha = 0.5) +
@@ -353,12 +357,12 @@ fraud_norm_rec <- recipe(isFraud ~ ., data = fraud_train) %>%
   step_log(all_numeric(), base = 10, offset = 0.01) %>%
   # Normalize numeric predictors - do this before normalizing
   step_normalize(all_numeric()) %>%
-  # encode categorical data into numerical data
+  # Encode categorical data into numerical data
   step_dummy(all_nominal(), -all_outcomes()) %>%
-  # deal with class imbalance
+  # Deal with class imbalance
   step_smote(isFraud)
 
-# Train the recipe
+# Train the recipe using the new engineered features
 fraud_test_prep <- fraud_norm_rec %>%
   prep(training = fraud_train) %>%
   bake(new_data = fraud_test)
@@ -396,9 +400,11 @@ fraud_results
 ## Evaluate the model with feature engineered data
 
 ```{r}
+# Confusion matrix results
 fraud_results %>%
   conf_mat(truth = isFraud, estimate = .pred_class)
 
+# Plot the ROC curve
 fraud_results %>%
   roc_curve(truth = isFraud, estimate = .pred_No) %>%
   autoplot()  +
@@ -427,18 +433,18 @@ dt_model <- decision_tree() %>%
   # Specify the mode
   set_mode("classification")
 
-# 5. Create a workflow - combine model and recipe
+# Create a workflow - combine model and recipe
 fraud_dt_wkfl <- workflow() %>%
   # Include the model object
   add_model(dt_model) %>%
   # Include the recipe object we created above
   add_recipe(fraud_norm_rec)
 
-# 6. Finish up by training the workflow
+# Finish up by training the workflow
 fraud_dt_wkfl_fit <- fraud_dt_wkfl %>%
   last_fit(split = fraud_split)
 
-# 7. Calculate performance metrics on test data
+# Calculate performance metrics on test data
 fraud_dt_wkfl_fit %>%
   collect_metrics()
 ```
@@ -458,17 +464,17 @@ that.
 set.seed(456)
 fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
 
-# print out the folds
+# Print out the folds
 fraud_folds
 
-# obtain metrics for our folds
+# Obtain metrics for our folds
 fraud_metrics <- metric_set(roc_auc, sens, spec)
 
-# now we train a model for every fold
+# Now we train a model for every fold
 fraud_dt_rs <- fraud_dt_wkfl %>%
   fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
 
-# and measure the out of sample performance for each
+# And measure the out of sample performance for each
 fraud_dt_rs %>% collect_metrics()
 ```
 
@@ -510,7 +516,7 @@ fraud_dt_rs %>%
 fraud_logistic_rs %>% 
   collect_metrics()
 
-# 7. compare model performance
+# Compare model performance
 # Detailed cross validation results
 dt_rs_results <- fraud_dt_rs %>% 
   collect_metrics(summarize = FALSE)
@@ -548,7 +554,7 @@ dt_tune_model <- decision_tree(
 
 # Crete a tuning workflow
 fraud_dt_tune_wkfl <- fraud_dt_wkfl %>%
-  # replace model
+  # Replace model
   update_model(dt_tune_model)
 
 # Hyperparameter tuning with grid search
@@ -641,14 +647,14 @@ Tidymodels can help you here too! You can use the `butcher` package within
 tidymodels to "axe parts of the fitted output that are no longer needed, without 
 sacrificing much functionality from the original model object"
 ```{r}
-# extract the workflow object to make predictions with
+# Extract the workflow object to make predictions with
 fraud_wf_model <- final_fraud_wkfl$.workflow[[1]]
 
-# save the model to be used later
+# Save the model to be used later
 saveRDS(fraud_wf_model, "./fraud_wf_model.rds")
 
-# lets also save the metrics so that we can see how the model performs on new
-# data coming through our Shiny application
+# Lets also save the metrics so that we can see how the model performs on new
+# Data coming through our Shiny application
 collect_metrics(fraud_final_fit) %>%
   write_csv("./fraud_model_metrics.csv")
 ```

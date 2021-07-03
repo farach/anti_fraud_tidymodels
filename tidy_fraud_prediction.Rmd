@@ -541,6 +541,12 @@ logistic_rs_results %>%
 
 The last thing I want to cover is hyperparameter tuning. We can use the `tune()`
 function from the `tune` package within tidymodels to do just that.
+
+The default values set by the `parsnip` model in tidymodels for decision trees
+is `min_n = 20`, `tree_depth = 30`, and `cost_complexity = 0.01`. min_n is the
+minimum bumber of samples required to split a node, tree_depth is the 
+maximum allowed depth of the tree, and cost_complexity is the penalty for the 
+tree complexity. 
 ```{r}
 # Set hyperparameters for tuning in the model specification step
 dt_tune_model <- decision_tree(
@@ -569,8 +575,12 @@ dt_tuning <- fraud_dt_tune_wkfl %>%
     grid = dt_grid,
     metrics = fraud_metrics
     )
+```
 
+```{r}
 # View results
+autoplot(dt_tuning)
+
 dt_tuning %>% 
   collect_metrics()
 
@@ -647,7 +657,7 @@ tidymodels to "axe parts of the fitted output that are no longer needed, without
 sacrificing much functionality from the original model object"
 ```{r}
 # Extract the workflow object to make predictions with
-fraud_wf_model <- final_fraud_wkfl$.workflow[[1]]
+fraud_wf_model <- fraud_final_fit$.workflow
 
 # Save the model to be used later
 saveRDS(fraud_wf_model, "./fraud_wf_model.rds")

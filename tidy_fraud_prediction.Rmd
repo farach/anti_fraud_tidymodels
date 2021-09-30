@@ -1,7 +1,7 @@
 ---
 title: "Tidymodels workflow example - fraud prediction"
 author: "Alex Farach"
-date: "4/01/2021"
+date: "9/30/2021"
 output: html_document
 ---
 
@@ -70,18 +70,24 @@ Eventually, most everything above will be covered. This is to say what follows
 is not the proper way to build a machine learning model - it's the way I find 
 it easiest to learn about tidymodels and machine learning pipelines generally.
 
+Some helpful resources:
+Tidy Modeling with R: https://www.tmwr.org/
+Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow: https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/
+Supervised Machine Learning for Text Analysis in R: https://smltar.com/preface.html
+tidymodels.org: https://www.tidymodels.org/
+
 # Tidymodels approach 
 ## Get the data
 
 The following table comes from the kaggle dataset: 
   https://www.kaggle.com/ntnu-testimon/paysim1
-```{r}
+```{r load data}
 # Import the data
-fraud_data <- read_csv("./fraud/example_data/fraud_example.csv")
+fraud_data <- read_csv("./example_data/fraud_example.csv")
 ```
 
 ## Explore the data
-```{r}
+```{r explore data}
 # Look at counts
 fraud_data %>%
   group_by(isFraud) %>%
@@ -96,7 +102,7 @@ fraud_data %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
 
 # Create visual to explore variables
-# set.seed(123)
+# set.seed(2021)
 # fraud_data %>%
 #   sample_frac(0.03) %>%
 #   select_if(is.numeric) %>%
@@ -118,10 +124,10 @@ fraud_data %>%
 ```
 
 ## Clean the data
-```{r}
+```{r clean data}
 library(tidymodels)
 
-set.seed(123)
+set.seed(2021)
 # Clean data a bit
 fraud_model_data <-
   fraud_data %>%
@@ -152,9 +158,9 @@ It's also a good practice to split the data earlier so that steps taken in the
 cleaning part of the machine learning process could be replicated in a ML
 pipeline.
 
-```{r}
+```{r set up train/test}
 # Set seed for reproducibility
-set.seed(123)
+set.seed(2021)
 
 # Create initial split
 fraud_split <- initial_split(fraud_model_data, prop = 0.75, strata = isFraud)
@@ -172,10 +178,17 @@ print(paste("Size of testing data:", nrow(fraud_test)))
 
 # Modeling V1
 Ideally you would want to use more than 2 models but here I will just present
-2 for the sake of simplicity: a logistic model and a decision tree model.
+2 for the sake of simplicity: a logistic model and a decision tree model. Both
+will work for our binary (fraud/not fraud) model. For a multiclass 
+classification problem we could do xgboost or ranger random forests. If we were
+doing text classification models we could look to a regularized regression model.
+
+There are A LOT of options depending on the problem. Here is a useful cheat 
+sheet for figuring out which machine learning algorithm to use:
+"https://blogs.sas.com/content/subconsciousmusings/2020/12/09/machine-learning-algorithm-use/#prettyPhoto/0/"
 
 If you would like to see all the models in Tidymodels you can do so by going to
-this link: https://www.tidymodels.org/find/parsnip/
+this link: "https://www.tidymodels.org/find/parsnip/"
 
 ## Specify the model - simple logistic regression
 ```{r specify_lg_simple}
@@ -261,6 +274,10 @@ model training steps. If we took that route we would want to do one last fit of
 the model on all the training data - not the folded and train/validation split 
 data.
 
+Here the last fit will fit the best model to the training set and evaluate on
+the test set which is why we pass the fraud_split data to the function and not
+just the training or the testing set.
+
 ```{r lg_simple_wf}
 # Train model with last fit
 fraud_last_fit <- logistic_model %>%
@@ -295,14 +312,14 @@ last_fit_results %>%
 Here I will introduce how to do feature engineering with tidymodels. Let's start
 with an easy example, looking for and removing highly correlated numeric 
 features.
-```{r}
+```{r find correlations}
 # Use the cor() function to find the correlated values
 fraud_train %>%
   select_if(is.numeric) %>%
   cor()
 ```
 
-```{r}
+```{r visualize correlations}
 # Visualize the relationship in question
 fraud_train %>%
   ggplot(aes(oldbalanceDest , newbalanceDest)) +
@@ -313,7 +330,7 @@ fraud_train %>%
 In tidymodels all feature engineering functions start with `step_*()` which makes
 it super easy to explore and deal with. Below I also introduce the `prep()` and
 `bake()` functions which allows us to apply the feature engineering to the data.
-```{r}
+```{r first pass at feature engineering}
 # Specify a recipe object
 fraud_cor_rec <- recipe(isFraud ~ ., data = fraud_train) %>% 
   # Remove correlated variables
@@ -343,9 +360,9 @@ In the next step we bring in the `themis` package within tidymodels to use the
 `step_smote()` function. This will address the class balance issue we discovered
 when exploring the data.
 
-```{r}
+```{r second pass at feature engineering}
 # Load the themis package to use SMOTE (Synthetic Minority Over-​sampling 
-# Technique) to deal with the class imbalance.
+# Technique). This package has add-on steps to deal with class imbalance.
 library(themis)
 
 # Specify a recipe object
@@ -377,7 +394,7 @@ fraud_train_prep
 
 ## Fit and predict new cleaned up (feature engineered) data
 
-```{r}
+```{r fit ft eng logistic model}
 # Train logistic model
 logistic_fit <- logistic_model %>% 
   fit(isFraud ~ ., data = fraud_train_prep)
@@ -398,7 +415,7 @@ fraud_results
 
 ## Evaluate the model with feature engineered data
 
-```{r}
+```{r evaluate performance}
 # Confusion matrix results
 fraud_results %>%
   conf_mat(truth = isFraud, estimate = .pred_class)
@@ -424,7 +441,7 @@ To create the workflow we will add a model and a recipe. In this case we will
 add the decision tree model and then the feature engineered recipe we did above.
 After that we can apply the split data to the workflow and get results.
 
-```{r}
+```{r create new decision tree model}
 # Choose model, engine, mode - decision tree
 dt_model <- decision_tree() %>%
   # Specify the engine
@@ -458,9 +475,12 @@ data by using validation folds.
 The rsample package within tidymodels has the `vfold_cv()` function to do just 
 that.
 
-```{r}
+```{r apply validation folds}
+# Use paralleization to improve performance
+doParallel::registerDoParallel()
+
 # Create cross validation folds
-set.seed(456)
+set.seed(2021)
 fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
 
 # Print out the folds
@@ -483,7 +503,7 @@ order.
 
 This is closer to looking like what you may typically see in a machine learning
 model project.
-```{r}
+```{r rerun models and evaluate performance}
 # I have left out the train/test split and feature engineering stuff but that
 # would go here before the workflow stuff.
 
@@ -547,7 +567,7 @@ is `min_n = 20`, `tree_depth = 30`, and `cost_complexity = 0.01`. min_n is the
 minimum bumber of samples required to split a node, tree_depth is the 
 maximum allowed depth of the tree, and cost_complexity is the penalty for the 
 tree complexity. 
-```{r}
+```{r hyperparameter tuning}
 # Set hyperparameters for tuning in the model specification step
 dt_tune_model <- decision_tree(
   cost_complexity = tune(), tree_depth = tune(), min_n = tune()
@@ -563,7 +583,7 @@ fraud_dt_tune_wkfl <- fraud_dt_wkfl %>%
   update_model(dt_tune_model)
 
 # Hyperparameter tuning with grid search
-set.seed(214)
+set.seed(2021)
 dt_grid <- grid_random(parameters(dt_tune_model), size = 5)
 
 dt_grid
@@ -577,7 +597,7 @@ dt_tuning <- fraud_dt_tune_wkfl %>%
     )
 ```
 
-```{r}
+```{r view hyperparameter tuning results}
 # View results
 autoplot(dt_tuning)
 
@@ -590,7 +610,7 @@ dt_tuning %>%
 
 Pick the best one!
 
-```{r}
+```{r select best tuned model}
 # Collect detailed tuning results
 dt_tuning_results <- dt_tuning %>% 
   collect_metrics(summarize = FALSE)
@@ -607,7 +627,9 @@ dt_tuning_results %>%
 dt_tuning %>% 
   show_best(metric = 'roc_auc', n = 5)
 
-# Select based on best performance
+# Select based on best performance. For a multiclass classification model
+# you could add desc(penalty) to get a model where the penalty is taking out 
+# more of the results - a simpler but effective model.
 best_dt_model <- dt_tuning %>% 
   # Choose the best model based on roc_auc
   select_best(metric = 'roc_auc')
@@ -623,7 +645,7 @@ At this point if you wanted to combine models you could do so via the `stacks`
 package within tidymodels! I will not cover that here.
 
 Almost done - the final train
-```{r}
+```{r final model train}
 # Train finalized decision tree workflow
 fraud_final_fit <- final_fraud_wkfl %>% 
   last_fit(split = fraud_split)
@@ -655,9 +677,9 @@ A word of caution, modeling pipelines can take up A LOT OF MEMORY. Guess what?
 Tidymodels can help you here too! You can use the `butcher` package within 
 tidymodels to "axe parts of the fitted output that are no longer needed, without 
 sacrificing much functionality from the original model object"
-```{r}
+```{r extract model and performance metrics}
 # Extract the workflow object to make predictions with
-fraud_wf_model <- fraud_final_fit$.workflow
+fraud_wf_model <- extract_workflow(fraud_final_fit)
 
 # Save the model to be used later
 saveRDS(fraud_wf_model, "./fraud_wf_model.rds")
@@ -668,8 +690,69 @@ collect_metrics(fraud_final_fit) %>%
   write_csv("./fraud_model_metrics.csv")
 ```
 
+We can now pass incoming data into our model to get our predictions
+
+```{r make predictions on new data}
+# lets go back and take a look at our original data
+glimpse(fraud_data)
+
+# We can select some random values to show how the extracted workflow would work
+# on incoming data.
+preds_res <- predict(fraud_wf_model, sample_n(fraud_data, 1), type = "class")
+preds_res$.pred_class
+```
+
 From here you could use the `plumber` package to create an API that calls this
 model and saves the results of the model to the model metrics csv!
+
+Plumber allows you to create APIs by merely decorating your existing R code with 
+special annotations. The example below shows an example of the plumber.R file
+that we would use to deploy this model.
+
+This file defines two Plumber “endpoints.” One is hosted at the path /predict 
+and makes the fraud prediction; the other is hosted at the path /metrics and 
+shows the expected model metrics from the training data.
+
+```{r api example}
+## API setup
+
+# Only keep packages you used - so not all of tidyverse and tidymodels to keep
+# things small and light.
+library(plumber)
+library(dplyr)
+library(parsnip)
+library(workflows)
+library(recipes)
+library(themis)
+
+## Load model + metrics
+fraud_wf_model <- readRDS("./fraud_wf_model.rds")
+fraud_metrics <- readr::read_csv("./fraud_model_metrics.csv")
+
+#* @apiTitle Fraud detection model API
+#* @apiDescription Fraud classification model predicting whether credit card transaction is fraud.
+
+#* Submit credit card transaction data to get fraud/not fraud prediction
+#* @serializer json
+#* @parser json
+#* @post /predict
+function(req, res) {
+  preds <- req$body
+  preds_res <- predict(fraud_wf_model, preds, type = "class")
+  preds_res$.pred_class
+}
+
+#* Expected model metrics from training
+#* @serializer json
+#* @get /metrics
+function() {
+  fraud_metrics
+}
+```
+
+From here you need to find a place where you can host your plumber API. Here is
+some information on the variety of ways you can do that: 
+https://www.rplumber.io/articles/hosting.html#docker-basic-
 
 Good luck!
 

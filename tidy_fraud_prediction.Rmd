@@ -127,7 +127,6 @@ fraud_data %>%
 ```{r clean data}
 library(tidymodels)
 
-set.seed(2021)
 # Clean data a bit
 fraud_model_data <-
   fraud_data %>%
@@ -136,9 +135,14 @@ fraud_model_data <-
     newbalanceDest
   ) %>%
   mutate(
-    isFraud = as.factor(if_else(isFraud == 0, "No", "Yes"))
+    isFraud = as.factor(ifelse(isFraud == 1, 0, 1))
   ) %>%
-  mutate_if(is.character, as.factor) %>%
+  mutate_if(is.character, as.factor)
+
+# Set seed for reproducibility
+set.seed(2021)
+# sample the data
+fraud_model_data <- fraud_model_data %>%
   sample_frac(0.03)
 
 # Get percentages
@@ -235,7 +239,7 @@ fraud_results
 ## Evaluate performance
 ```{r evaluate_lg_simple}
 # Create custom metric set to evaluate performance.
-custom_metrics <- metric_set(accuracy, sens, spec)
+custom_metrics <- metric_set(accuracy, sens, spec, precision, recall, f_meas)
 
 # Print out the custom metrics results
 custom_metrics(fraud_results, truth = isFraud, estimate = .pred_class)
@@ -244,6 +248,89 @@ custom_metrics(fraud_results, truth = isFraud, estimate = .pred_class)
 conf_mat(fraud_results, truth = isFraud, estimate = .pred_class) %>%
   summary()
 ```
+
+## Detour to talk about performance metrics
+
+Which performance metric you decide to optimize has implications for which model
+you want to use and how to tune said chosen model. It's worthwhile to do a quick
+review of them.
+
+The following was adapted from this excellent post by S.Ghoneim:
+https://towardsdatascience.com/accuracy-recall-precision-f-score-specificity-which-to-optimize-on-867d3f11124
+
+### Accuracy
+The ratio of the correctly labeled subjects to the whole pool of subjects.
+
+Accuracy = (TP+TN)/(TP+FP+FN+TN)
+
+How many fraudsters did we correctly label out of all the fraudsters?
+
+```{r}
+yardstick::accuracy(fraud_results, truth = isFraud, estimate = .pred_class)
+```
+
+### Precision
+The ratio of the correctly positive labeled by our program to all positive 
+labeled.
+
+Precision = TP/(TP+FP)
+
+How many of those who we labeled as fraudsters are actually fraudsters?
+
+```{r}
+yardstick::precision(fraud_results, truth = isFraud, estimate = .pred_class)
+```
+
+### Recall (aka Sensitivity)
+Recall is the ratio of the correctly positive labeled by our program to all who 
+are fraudulent in reality.
+
+Recall = TP/(TP+FN)
+
+Of all the transactions that are fraudulent, how many of those we correctly 
+predict?
+
+```{r}
+yardstick::recall(fraud_results, truth = isFraud, estimate = .pred_class)
+```
+
+### Specificity
+Specificity is the correctly -ve labeled by the program to all who are healthy 
+in reality.
+
+Specificity = TN/(TN+FP)
+
+Of all the legitimate transactions, how many of those did we correctly predict?
+
+```{r}
+yardstick::specificity(fraud_results, truth = isFraud, estimate = .pred_class)
+```
+
+### F1-score (aka F-Score / F-Measure)
+
+F1 Score considers both precision and recall.
+It is the harmonic mean(average) of the precision and recall.
+
+F1 Score = 2*(Recall * Precision) / (Recall + Precision)
+
+F1 Score is best if there is some sort of balance between precision (p) & recall 
+(r) in the system. Oppositely F1 Score isn’t so high if one measure is improved 
+at the expense of the other.
+```{r}
+yardstick::f_meas(fraud_results, truth = isFraud, estimate = .pred_class)
+```
+
+So which should we choose? In this case we want to optimize recall and the 
+f-measure.
+
+A focus on recall because we would rather get some extra false positives over
+saving some false negatives. We would rather label some legitimate transactions
+as fraudulent over missing actual, real fraudulent transactions.
+
+The f-measure takes into consideration recall but also considers precision. This
+is helpful because we have an uneven class distribution. Precision is how sure
+we are of our true positives. Recall is how sure we are that we are not
+missing any positives.
 
 ## Visual evaluation - confusion matrix, ROC curve and area under ROC curve
 ```{r eval_lg_simple_viz}
@@ -254,7 +341,7 @@ fraud_results %>%
 
 # Plot roc_curve
 fraud_results %>%
-  roc_curve(truth = isFraud, estimate = .pred_No) %>%
+  roc_curve(truth = isFraud, estimate = .pred_0) %>%
   autoplot() +
   labs(
     x = "1-specificity\n(proportion of false positives\namong true negatives)",
@@ -262,7 +349,7 @@ fraud_results %>%
   )
 
 # Print out the AUC of the ROC curve
-roc_auc(fraud_results, truth = isFraud, .pred_No)
+roc_auc(fraud_results, truth = isFraud, .pred_0)
 ```
 
 ## Complete the model training process
@@ -270,13 +357,11 @@ roc_auc(fraud_results, truth = isFraud, .pred_No)
 Our approach thus far has been really simple. We only used a single training 
 set. Later on I'll show you how to use validation folds and I mentioned the use 
 of a validation set above which would add some complications to these first 
-model training steps. If we took that route we would want to do one last fit of 
-the model on all the training data - not the folded and train/validation split 
-data.
+model training steps.
 
-Here the last fit will fit the best model to the training set and evaluate on
-the test set which is why we pass the fraud_split data to the function and not
-just the training or the testing set.
+Let's say we were happy here though. The last fit will fit the best model to the 
+training set and evaluate on the test set which is why we pass the fraud_split 
+data to the function and not just the training or the testing set.
 
 ```{r lg_simple_wf}
 # Train model with last fit
@@ -288,18 +373,17 @@ last_fit_results <- fraud_last_fit %>%
   collect_predictions()
 
 # Custom metrics function
-last_fit_metrics <- metric_set(accuracy, sens,
-                               spec, roc_auc)
+last_fit_metrics <- metric_set(accuracy, sens, spec, precision, recall, f_meas)
 
 # Calculate metrics
 last_fit_metrics(last_fit_results,
                  truth = isFraud,
                  estimate = .pred_class,
-                 .pred_No)
+                 .pred_0)
 
 # Plot roc_curve
 last_fit_results %>%
-  roc_curve(truth = isFraud, .pred_No) %>%
+  roc_curve(truth = isFraud, .pred_0) %>%
   autoplot() +
   labs(
     x = "1-specificity\n(proportion of false positives\namong true negatives)",
@@ -371,7 +455,7 @@ fraud_norm_rec <- recipe(isFraud ~ ., data = fraud_train) %>%
   step_corr(all_numeric(), threshold = 0.9) %>%
   # Add log transformation step
   step_log(all_numeric(), base = 10, offset = 0.01) %>%
-  # Normalize numeric predictors - do this before normalizing
+  # Normalize numeric predictors
   step_normalize(all_numeric()) %>%
   # Encode categorical data into numerical data
   step_dummy(all_nominal(), -all_outcomes()) %>%
@@ -415,6 +499,22 @@ fraud_results
 
 ## Evaluate the model with feature engineered data
 
+Here is when the performance metric we want to optimize really matters. Prior to
+all the feature engineering, when we used that very basic logistic regression 
+model our false negatives were 33 and now they are 3,714! Our recall improved
+but our f1 score suffered since our precision suffered.
+
+Our true positives went from 25 to 82 though! This becomes a business decision.
+Since these are fraudulent transactions we need to think about the difference
+between these 2 numbers.
+
+What happens when we suspect a fraudulent transaction? What happens when we miss 
+an actual fraudulent transaction? What costs more, dealing with the fallout
+from cancelling a real transaction or dealing with the fallout of missing a real
+fraud event?
+
+Performance metrics matter.
+
 ```{r evaluate performance}
 # Confusion matrix results
 fraud_results %>%
@@ -422,7 +522,7 @@ fraud_results %>%
 
 # Plot the ROC curve
 fraud_results %>%
-  roc_curve(truth = isFraud, estimate = .pred_No) %>%
+  roc_curve(truth = isFraud, estimate = .pred_0) %>%
   autoplot()  +
   labs(
     x = "1-specificity\n(proportion of false positives\namong true negatives)",
@@ -458,7 +558,7 @@ fraud_dt_wkfl <- workflow() %>%
 
 # Finish up by training the workflow
 fraud_dt_wkfl_fit <- fraud_dt_wkfl %>%
-  last_fit(split = fraud_split)
+  last_fit(split = fraud_split, metrics = last_fit_metrics)
 
 # Calculate performance metrics on test data
 fraud_dt_wkfl_fit %>%
@@ -486,12 +586,9 @@ fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
 # Print out the folds
 fraud_folds
 
-# Obtain metrics for our folds
-fraud_metrics <- metric_set(roc_auc, sens, spec)
-
 # Now we train a model for every fold
 fraud_dt_rs <- fraud_dt_wkfl %>%
-  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+  fit_resamples(resamples = fraud_folds, metrics = last_fit_metrics)
 
 # And measure the out of sample performance for each
 fraud_dt_rs %>% collect_metrics()
@@ -523,12 +620,12 @@ fraud_logistic_wkfl <- workflow() %>%
 
 # Fit Resamples - create cross validation folds and metrics
 fraud_folds <- vfold_cv(fraud_train, v = 10, strata = isFraud)
-fraud_metrics <- metric_set(roc_auc, sens, spec)
+fraud_metrics <- metric_set(accuracy, sens, spec, precision, recall, f_meas)
 
 fraud_dt_rs <- fraud_dt_wkfl %>%
-  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+  fit_resamples(resamples = fraud_folds, metrics = last_fit_metrics)
 fraud_logistic_rs <- fraud_logistic_wkfl %>% 
-  fit_resamples(resamples = fraud_folds, metrics = fraud_metrics)
+  fit_resamples(resamples = fraud_folds, metrics = last_fit_metrics)
 
 fraud_dt_rs %>% 
   collect_metrics()
@@ -612,8 +709,10 @@ Pick the best one!
 
 ```{r select best tuned model}
 # Collect detailed tuning results
-dt_tuning_results <- dt_tuning %>% 
-  collect_metrics(summarize = FALSE)
+dt_tuning_results <- dt_tuning %>%
+  collect_metrics(summarize = FALSE, metrics = metric_set(
+    accuracy, sens, spec, precision, recall, f_meas
+  ))
 
 # Explore detailed ROC AUC results for each fold
 dt_tuning_results %>% 
@@ -625,14 +724,14 @@ dt_tuning_results %>%
 
 # Display 5 best performing models
 dt_tuning %>% 
-  show_best(metric = 'roc_auc', n = 5)
+  show_best(metric = 'recall', n = 5)
 
 # Select based on best performance. For a multiclass classification model
 # you could add desc(penalty) to get a model where the penalty is taking out 
 # more of the results - a simpler but effective model.
 best_dt_model <- dt_tuning %>% 
   # Choose the best model based on roc_auc
-  select_best(metric = 'roc_auc')
+  select_best(metric = 'recall')
 
 # Finalize your workflow
 final_fraud_wkfl <- fraud_dt_tune_wkfl %>% 
@@ -659,7 +758,7 @@ fraud_final_fit %>%
   # Collect predictions
   collect_predictions() %>%
   # Calculate ROC curve metrics
-  roc_curve(truth = isFraud, .pred_No) %>%
+  roc_curve(truth = isFraud, estimate = .pred_class) %>%
   # Plot the ROC curve
   autoplot() +
   labs(

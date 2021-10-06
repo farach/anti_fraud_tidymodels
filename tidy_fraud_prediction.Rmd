@@ -1,7 +1,7 @@
 ---
 title: "Tidymodels workflow example - fraud prediction"
 author: "Alex Farach"
-date: "9/30/2021"
+date: "10/06/2021"
 output: html_document
 ---
 
@@ -23,6 +23,8 @@ theme_set(theme_minimal())
 ```
 
 # Typical steps in a machine learning project ----------------------------------
+Adapted from the excellent "Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow": https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/
+
 1. Get the data
 2. Explore the data
   - Study attributes
@@ -58,7 +60,7 @@ theme_set(theme_minimal())
   - Hyperparameter tuning using cross-validation
   - Ensemble methods (maybe)
   - Once confident about the final model, measure performance on test set.
-6. Present results
+6. Present results (Rmarkdown/Shiny dashboard)
 7. Deploy model
 
 In the example that follows I slowly add different elements of this whole list
@@ -70,11 +72,10 @@ Eventually, most everything above will be covered. This is to say what follows
 is not the proper way to build a machine learning model - it's the way I find 
 it easiest to learn about tidymodels and machine learning pipelines generally.
 
-Some helpful resources:
-Tidy Modeling with R: https://www.tmwr.org/
-Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow: https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/
-Supervised Machine Learning for Text Analysis in R: https://smltar.com/preface.html
-tidymodels.org: https://www.tidymodels.org/
+Some other helpful resources:
+-tidymodels.org: https://www.tidymodels.org/
+-Tidy Modeling with R: https://www.tmwr.org/
+-Supervised Machine Learning for Text Analysis in R: https://smltar.com/
 
 # Tidymodels approach 
 ## Get the data
@@ -89,7 +90,7 @@ glimpse(fraud_data)
 ```
 
 ## Explore the data
-```{r explore data}
+```{r}
 # Look at counts
 fraud_data %>%
   group_by(isFraud) %>%
@@ -131,7 +132,6 @@ fraud_model_data %>%
   count(isFraud) %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
 ```
-
 ## Create split, train, and test datasets
 
 Here we are just creating a training and testing split. If you wanted to you
@@ -160,7 +160,6 @@ fraud_test <- testing(fraud_split)
 print(paste("Size of training data:", nrow(fraud_train)))
 print(paste("Size of testing data:", nrow(fraud_test)))
 ```
-
 # Modeling V1
 Ideally you would want to use more than 2 models but here I will just present
 2 for the sake of simplicity: a logistic model and a decision tree model. Both
@@ -247,7 +246,7 @@ Accuracy = (TP+TN)/(TP+FP+FN+TN)
 How many fraudsters did we correctly label out of all the fraudsters?
 
 ```{r}
-yardstick::accuracy(fraud_results, truth = isFraud, estimate = .pred_class)
+accuracy(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 ### Precision
@@ -259,7 +258,7 @@ Precision = TP/(TP+FP)
 How many of those who we labeled as fraudsters are actually fraudsters?
 
 ```{r}
-yardstick::precision(fraud_results, truth = isFraud, estimate = .pred_class)
+precision(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 ### Recall (aka Sensitivity)
@@ -272,7 +271,7 @@ Of all the transactions that are fraudulent, how many of those we correctly
 predict?
 
 ```{r}
-yardstick::recall(fraud_results, truth = isFraud, estimate = .pred_class)
+recall(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 ### Specificity
@@ -284,7 +283,7 @@ Specificity = TN/(TN+FP)
 Of all the legitimate transactions, how many of those did we correctly predict?
 
 ```{r}
-yardstick::specificity(fraud_results, truth = isFraud, estimate = .pred_class)
+specificity(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 ### F1-score (aka F-Score / F-Measure)
@@ -298,7 +297,7 @@ F1 Score is best if there is some sort of balance between precision (p) & recall
 (r) in the system. Oppositely F1 Score isn’t so high if one measure is improved 
 at the expense of the other.
 ```{r}
-yardstick::f_meas(fraud_results, truth = isFraud, estimate = .pred_class)
+f_meas(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 So which should we choose? In this case we want to optimize recall and the 
@@ -424,6 +423,10 @@ or `step_pca()`
 In the next step we bring in the `themis` package within tidymodels to use the
 `step_smote()` function. This will address the class balance issue we discovered
 when exploring the data.
+
+The `recipes` package is extensive. Please see the documentation for the full
+breadth of the recipes it has available. If you want to create your own recipe 
+instructions to do so are here: https://recipes.tidymodels.org/reference/recipe.html
 
 ```{r second pass at feature engineering}
 # Load the themis package to use SMOTE (Synthetic Minority Over-​sampling 
@@ -769,16 +772,14 @@ tidymodels to "axe parts of the fitted output that are no longer needed, without
 sacrificing much functionality from the original model object"
 
 ```{r extract model and performance metrics}
+library(butcher)
+
 # Extract the workflow object to make predictions with
 fraud_wf_model <- extract_workflow(fraud_final_fit)
+fraud_butcher_model <- butcher(fraud_wf_model)
 
-# Save the model to be used later
-saveRDS(fraud_wf_model, "./fraud_wf_model.rds")
-
-# Lets also save the metrics so that we can see how the model performs on new
-# Data coming through our Shiny application
-collect_metrics(fraud_final_fit) %>%
-  write_csv("./fraud_model_metrics.csv")
+print(paste("Original workflow size:", lobstr::obj_size(fraud_wf_model), "B"))
+print(paste("Butchered workflow size", lobstr::obj_size(fraud_butcher_model), "B"))
 ```
 
 We can now pass incoming data into our model to get our predictions
@@ -789,8 +790,20 @@ glimpse(fraud_data)
 
 # We can select some random values to show how the extracted workflow would work
 # on incoming data.
-preds_res <- predict(fraud_wf_model, sample_n(fraud_data, 1), type = "class")
+preds_res <- predict(fraud_butcher_model, sample_n(fraud_data, 1), type = "class")
 preds_res$.pred_class
+```
+
+Now that we have our lean and mean model we can export the model to use in prod.
+
+```{r}
+# Save the model to be used later
+saveRDS(fraud_butcher_model, "./fraud_butcher_model.rds")
+
+# Lets also save the metrics so that we can see how the model performs on new
+# Data coming through our Shiny application
+collect_metrics(fraud_final_fit) %>%
+  write_csv("./fraud_model_metrics.csv")
 ```
 
 From here you could use the `plumber` package to create an API that calls this
@@ -843,7 +856,7 @@ function() {
 
 From here you need to find a place where you can host your plumber API. Here is
 some information on the variety of ways you can do that: 
-https://www.rplumber.io/articles/hosting.html#docker-basic-
+https://www.rplumber.io/articles/hosting.html
 
 Good luck!
 

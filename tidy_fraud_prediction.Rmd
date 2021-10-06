@@ -84,6 +84,8 @@ The following table comes from the kaggle dataset:
 ```{r load data}
 # Import the data
 fraud_data <- read_csv("./example_data/fraud_example.csv")
+
+glimpse(fraud_data)
 ```
 
 ## Explore the data
@@ -100,30 +102,9 @@ fraud_data %>%
 fraud_data %>%
   count(isFraud) %>%
   mutate(per_n = scales::percent(n/sum(n), accuracy = 0.01))
-
-# Create visual to explore variables
-# set.seed(2021)
-# fraud_data %>%
-#   sample_frac(0.03) %>%
-#   select_if(is.numeric) %>%
-#   GGally::ggscatmat(
-#     columns = 1:6, 
-#     color = "isFraud", 
-#     alpha = 0.75,  
-#     corMethod = "spearman"
-#     ) +
-#   ggsci::scale_color_jco() +
-#   # ggpubr::theme_pubclean() +
-#   # theme(
-#   #   strip.background = element_blank(),
-#   #   legend.position = "bottom",
-#   #   legend.key = element_blank()
-#   #   ) +
-#   labs(
-#     title = "Scatterplot matrix for fraud data numeric variables")
 ```
 
-## Clean the data
+## Format the data
 ```{r clean data}
 library(tidymodels)
 
@@ -600,6 +581,7 @@ order.
 
 This is closer to looking like what you may typically see in a machine learning
 model project.
+
 ```{r rerun models and evaluate performance}
 # I have left out the train/test split and feature engineering stuff but that
 # would go here before the workflow stuff.
@@ -628,9 +610,11 @@ fraud_logistic_rs <- fraud_logistic_wkfl %>%
   fit_resamples(resamples = fraud_folds, metrics = last_fit_metrics)
 
 fraud_dt_rs %>% 
-  collect_metrics()
+  collect_metrics() %>%
+  mutate(model = "decision_tree")
 fraud_logistic_rs %>% 
-  collect_metrics()
+  collect_metrics() %>%
+  mutate(model = "logistic_regression")
 
 # Compare model performance
 # Detailed cross validation results
@@ -644,14 +628,16 @@ dt_rs_results %>%
   group_by(.metric) %>% 
   summarize(min = min(.estimate, na.rm = TRUE),
             median = median(.estimate, na.rm = TRUE),
-            max = max(.estimate, na.rm = TRUE))
+            max = max(.estimate, na.rm = TRUE)) %>%
+  mutate(model = "decision_tree")
 
 # Explore model performance for logistic regression
 logistic_rs_results %>% 
   group_by(.metric) %>% 
   summarize(min = min(.estimate, na.rm = TRUE),
             median = median(.estimate, na.rm = TRUE),
-            max = max(.estimate, na.rm = TRUE))
+            max = max(.estimate, na.rm = TRUE)) %>%
+  mutate(model = "logistic_regression")
 ```
 
 ## Hyperparameters tuning
@@ -663,7 +649,8 @@ The default values set by the `parsnip` model in tidymodels for decision trees
 is `min_n = 20`, `tree_depth = 30`, and `cost_complexity = 0.01`. min_n is the
 minimum bumber of samples required to split a node, tree_depth is the 
 maximum allowed depth of the tree, and cost_complexity is the penalty for the 
-tree complexity. 
+tree complexity.
+
 ```{r hyperparameter tuning}
 # Set hyperparameters for tuning in the model specification step
 dt_tune_model <- decision_tree(
@@ -695,14 +682,18 @@ dt_tuning <- fraud_dt_tune_wkfl %>%
 ```
 
 ```{r view hyperparameter tuning results}
-# View results
-autoplot(dt_tuning)
-
 dt_tuning %>% 
   collect_metrics()
 
 dt_tuning %>%
   collect_metrics(summarize = FALSE)
+
+autoplot(dt_tuning) +
+  geom_line(linetype = "dashed") +
+  labs(
+    x = "Hyperparameter values",
+    y = "Performance metric score"
+  )
 ```
 
 Pick the best one!
@@ -758,7 +749,7 @@ fraud_final_fit %>%
   # Collect predictions
   collect_predictions() %>%
   # Calculate ROC curve metrics
-  roc_curve(truth = isFraud, estimate = .pred_class) %>%
+  roc_curve(truth = isFraud, estimate = .pred_0) %>%
   # Plot the ROC curve
   autoplot() +
   labs(
@@ -776,6 +767,7 @@ A word of caution, modeling pipelines can take up A LOT OF MEMORY. Guess what?
 Tidymodels can help you here too! You can use the `butcher` package within 
 tidymodels to "axe parts of the fitted output that are no longer needed, without 
 sacrificing much functionality from the original model object"
+
 ```{r extract model and performance metrics}
 # Extract the workflow object to make predictions with
 fraud_wf_model <- extract_workflow(fraud_final_fit)

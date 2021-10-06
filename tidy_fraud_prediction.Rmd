@@ -1,7 +1,7 @@
 ---
 title: "Tidymodels workflow example - fraud prediction"
 author: "Alex Farach"
-date: "10/06/2021"
+date: "9/30/2021"
 output: html_document
 ---
 
@@ -822,12 +822,12 @@ shows the expected model metrics from the training data.
 
 # Only keep packages you used - so not all of tidyverse and tidymodels to keep
 # things small and light.
-library(plumber)
-library(dplyr)
-library(parsnip)
-library(workflows)
-library(recipes)
-library(themis)
+library(plumber) # API
+library(dplyr) # data manipulation
+library(parsnip) # model/engine selection
+library(workflows) # machine learning pipeline
+library(recipes) # preprocessor
+library(themis) # calss imbalance
 
 ## Load model + metrics
 fraud_wf_model <- readRDS("./fraud_wf_model.rds")

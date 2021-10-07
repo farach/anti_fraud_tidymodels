@@ -30,8 +30,8 @@ Learn more about Accenture Applied Intelligence here: https://www.accenture.com/
 # Typical steps in a machine learning project ----------------------------------
 Adapted from the excellent "Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow": https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/
 
-1. Get the data
-2. Explore the data
+1. Get the data (tidyverse)
+2. Explore the data (tidyverse, tidymodels)
   - Study attributes
     - name
     - types 
@@ -66,7 +66,7 @@ Adapted from the excellent "Hands-On Machine Learning with Scikit-Learn, Keras, 
   - Ensemble methods (maybe)
   - Once confident about the final model, measure performance on test set.
 6. Present results (Rmarkdown/Shiny dashboard)
-7. Deploy model
+7. Deploy model (rplumber/docker)
 
 In the example that follows I slowly add different elements of this whole list
 in order to present the tidymodels machine learning approach in a more 
@@ -272,7 +272,7 @@ are fraudulent in reality.
 
 Recall = TP/(TP+FN)
 
-Of all the transactions that are fraudulent, how many of those we correctly 
+Of all the transactions that are fraudulent, how many of those did we correctly 
 predict?
 
 ```{r}
@@ -280,8 +280,8 @@ recall(fraud_results, truth = isFraud, estimate = .pred_class)
 ```
 
 ### Specificity
-Specificity is the correctly -ve labeled by the program to all who are healthy 
-in reality.
+Specificity is the correctly negative labeled by the program to all who are 
+fraudsters in reality.
 
 Specificity = TN/(TN+FP)
 
@@ -312,10 +312,9 @@ A focus on recall because we would rather get some extra false positives over
 saving some false negatives. We would rather label some legitimate transactions
 as fraudulent over missing actual, real fraudulent transactions.
 
-The f-measure takes into consideration recall but also considers precision. This
-is helpful because we have an uneven class distribution. Precision is how sure
-we are of our true positives. Recall is how sure we are that we are not
-missing any positives.
+The f-measure takes into consideration recall but also considers precision. 
+Precision is how sure we are of our true positives. Recall is how sure we are 
+that we are not missing any positives.
 
 ## Visual evaluation - confusion matrix, ROC curve and area under ROC curve
 ```{r eval_lg_simple_viz}
@@ -381,6 +380,7 @@ last_fit_results %>%
 Here I will introduce how to do feature engineering with tidymodels. Let's start
 with an easy example, looking for and removing highly correlated numeric 
 features.
+
 ```{r find correlations}
 # Use the cor() function to find the correlated values
 fraud_train %>%
@@ -399,6 +399,7 @@ fraud_train %>%
 In tidymodels all feature engineering functions start with `step_*()` which makes
 it super easy to explore and deal with. Below I also introduce the `prep()` and
 `bake()` functions which allows us to apply the feature engineering to the data.
+
 ```{r first pass at feature engineering}
 # Specify a recipe object
 fraud_cor_rec <- recipe(isFraud ~ ., data = fraud_train) %>% 
@@ -490,10 +491,10 @@ fraud_results
 
 Here is when the performance metric we want to optimize really matters. Prior to
 all the feature engineering, when we used that very basic logistic regression 
-model our false negatives were 33 and now they are 3,714! Our recall improved
+model our false negatives were 18 and now they are 3,658! Our recall improved
 but our f1 score suffered since our precision suffered.
 
-Our true positives went from 25 to 82 though! This becomes a business decision.
+Our true positives went from 24 to 56 though! This becomes a business decision.
 Since these are fraudulent transactions we need to think about the difference
 between these 2 numbers.
 
@@ -655,14 +656,16 @@ function from the `tune` package within tidymodels to do just that.
 
 The default values set by the `parsnip` model in tidymodels for decision trees
 is `min_n = 20`, `tree_depth = 30`, and `cost_complexity = 0.01`. min_n is the
-minimum bumber of samples required to split a node, tree_depth is the 
+minimum number of samples required to split a node, tree_depth is the 
 maximum allowed depth of the tree, and cost_complexity is the penalty for the 
 tree complexity.
 
 ```{r hyperparameter tuning}
 # Set hyperparameters for tuning in the model specification step
 dt_tune_model <- decision_tree(
-  cost_complexity = tune(), tree_depth = tune(), min_n = tune()
+  cost_complexity = tune(),
+  tree_depth = tune(),
+  min_n = tune()
   ) %>% 
   # Specify engine
   set_engine('rpart') %>% 
@@ -713,14 +716,6 @@ dt_tuning_results <- dt_tuning %>%
     accuracy, sens, spec, precision, recall, f_meas
   ))
 
-# Explore detailed ROC AUC results for each fold
-dt_tuning_results %>% 
-  filter(.metric == 'roc_auc') %>% 
-  group_by(id) %>% 
-  summarize(min_roc_auc = min(.estimate),
-            median_roc_auc = median((.estimate)),
-            max_roc_auc = max((.estimate)))
-
 # Display 5 best performing models
 dt_tuning %>% 
   show_best(metric = 'recall', n = 5)
@@ -747,10 +742,6 @@ Almost done - the final train
 # Train finalized decision tree workflow
 fraud_final_fit <- final_fraud_wkfl %>% 
   last_fit(split = fraud_split)
-
-# View performance metrics
-fraud_final_fit %>% 
-  collect_metrics()
 
 # Create an ROC curve
 fraud_final_fit %>% 
@@ -827,6 +818,7 @@ shows the expected model metrics from the training data.
 
 # Only keep packages you used - so not all of tidyverse and tidymodels to keep
 # things small and light.
+library(readr) # read csv
 library(plumber) # API
 library(dplyr) # data manipulation
 library(parsnip) # model/engine selection
@@ -835,8 +827,8 @@ library(recipes) # preprocessor
 library(themis) # calss imbalance
 
 ## Load model + metrics
-fraud_wf_model <- readRDS("./fraud_wf_model.rds")
-fraud_metrics <- readr::read_csv("./fraud_model_metrics.csv")
+fraud_butcher_model <- readRDS("./fraud_butcher_model.rds")
+fraud_metrics <- read_csv("./fraud_model_metrics.csv")
 
 #* @apiTitle Fraud detection model API
 #* @apiDescription Fraud classification model predicting whether credit card transaction is fraud.
@@ -847,7 +839,7 @@ fraud_metrics <- readr::read_csv("./fraud_model_metrics.csv")
 #* @post /predict
 function(req, res) {
   preds <- req$body
-  preds_res <- predict(fraud_wf_model, preds, type = "class")
+  preds_res <- predict(fraud_butcher_model, preds, type = "class")
   preds_res$.pred_class
 }
 

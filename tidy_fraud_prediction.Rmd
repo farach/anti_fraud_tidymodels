@@ -22,6 +22,11 @@ library(tidyverse)
 theme_set(theme_minimal())
 ```
 
+# Contact
+If you have any questions feel free to reach out to me: alexander.r.farach@accenturefederal.com
+Learn more about Accenture Applied Intelligence here: https://www.accenture.com/us-en/services/us-federal-government/artificial-intelligence
+
+
 # Typical steps in a machine learning project ----------------------------------
 Adapted from the excellent "Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow": https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/
 
@@ -859,5 +864,3 @@ some information on the variety of ways you can do that:
 https://www.rplumber.io/articles/hosting.html
 
 Good luck!
-
-If you have any questions feel free to reach out to me: alexander.r.farach@accenturefederal.com
